@@ -231,36 +231,36 @@ for i in range(QTD_LINHAS_PADRAO):
         ws_entradas.cell(row=r, column=col_idx).border = Estilos.BORDA_FINA
 
     # I: ICMS Crédito
-    # =SE(E{r}<>""; SE(G{r}="Compra de Mercadoria"; E{r}*VALOR(SUBSTITUIR(H{r};"%";""))/100; 0); 0)
+    # =IF(E{r}<>"", IF(G{r}="Compra de Mercadoria", E{r}*VALUE(SUBSTITUTE(H{r},"%", ""))/100, 0), 0)
     formula_icms_credito = (
-        f'=SE(E{r}<>"";'
-        f'SE(G{r}="Compra de Mercadoria";'
-        f'E{r}*VALOR(SUBSTITUIR(H{r};"%";""))/100;'
-        f'0);'
+        f'=IF(E{r}<>"",'
+        f'IF(G{r}="Compra de Mercadoria",'
+        f'E{r}*VALUE(SUBSTITUTE(H{r},"%", ""))/100,'
+        f'0),'
         f'0)'
     )
     ws_entradas.cell(row=r, column=9).value = formula_icms_credito
 
     # J: PIS/COFINS Crédito
-    # =SE(E{r}<>""; SE(G{r}="Compra de Mercadoria"; E{r}*{PISCOFINS_ALIQUOTA}; 0); 0)
+    # =IF(E{r}<>"", IF(G{r}="Compra de Mercadoria", E{r}*{PISCOFINS_ALIQUOTA}, 0), 0)
     formula_piscofins_credito = (
-        f'=SE(E{r}<>"";'
-        f'SE(G{r}="Compra de Mercadoria";'
-        f'E{r}*{PISCOFINS_ALIQUOTA};'
-        f'0);'
+        f'=IF(E{r}<>"",'
+        f'IF(G{r}="Compra de Mercadoria",'
+        f'E{r}*{PISCOFINS_ALIQUOTA},'
+        f'0),'
         f'0)'
     )
     ws_entradas.cell(row=r, column=10).value = formula_piscofins_credito
     ws_entradas.cell(row=r, column=10).fill = Estilos.PREENCHIMENTO_PISCOFINS
 
     # K: Indicador Crédito
-    # =SE(E{r}<>""; SE(G{r}<>"Compra de Mercadoria"; "Sem Crédito"; "Com Crédito"); "")
+    # =IF(E{r}<>"", IF(G{r}<>"Compra de Mercadoria", "Sem Crédito", "Com Crédito"), "")
     formula_indicador_credito = (
-        f'=SE(E{r}<>"";'
-        f'SE(G{r}<>"Compra de Mercadoria";'
-        f'"Sem Crédito";'
-        f'"Com Crédito");'
-        f'""'
+        f'=IF(E{r}<>"",'
+        f'IF(G{r}<>"Compra de Mercadoria",'
+        f'"Sem Crédito",'
+        f'"Com Crédito"),'
+        f'"")'
     )
     ws_entradas.cell(row=r, column=11).value = formula_indicador_credito
     ws_entradas.cell(row=r, column=11).alignment = Estilos.ALINHAMENTO_CENTRO
@@ -380,23 +380,23 @@ for i in range(QTD_LINHAS_PADRAO):
     
     # H: ICMS Débito
     # Se Benefício=Sim E %ICMS=19%, usa 11% (base reduzida). Senão, usa %ICMS normal.
-    # =SE(E{r}<>""; SE(E{r}="19%"; SE(G{r}="Sim"; E{r}*0.11; E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100); E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100); 0)
+    # =IF(E{r}<>"", IF(E{r}="19%", IF(G{r}="Sim", E{r}*0.11, E{r}*VALUE(SUBSTITUTE(F{r},"%", ""))/100), E{r}*VALUE(SUBSTITUTE(F{r},"%", ""))/100), 0)
     formula_icms_debito = (
-        f'=SE(E{r}<>"";'
-        f'SE(E{r}="19%";'
-        f'SE(G{r}="Sim";'
-        f'E{r}*0.11;' # 11% para 19% com PROTEGE
-        f'E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100);' # Alíquota normal
-        f'E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100);' # Alíquota normal
+        f'=IF(E{r}<>"",'
+        f'IF(E{r}="19%",'
+        f'IF(G{r}="Sim",'
+        f'E{r}*0.11,' # 11% para 19% com PROTEGE
+        f'E{r}*VALUE(SUBSTITUTE(F{r},"%", ""))/100),' # Alíquota normal
+        f'E{r}*VALUE(SUBSTITUTE(F{r},"%", ""))/100),' # Alíquota normal
         f'0)'
     )
     ws_saidas.cell(row=r, column=8).value = formula_icms_debito
 
     # I: PIS/COFINS Débito
-    # =SE(E{r}<>""; E{r}*{PISCOFINS_ALIQUOTA}; 0)
+    # =IF(E{r}<>"", E{r}*{PISCOFINS_ALIQUOTA}, 0)
     formula_piscofins_debito = (
-        f'=SE(E{r}<>"";'
-        f'E{r}*{PISCOFINS_ALIQUOTA};'
+        f'=IF(E{r}<>"",'
+        f'E{r}*{PISCOFINS_ALIQUOTA},'
         f'0)'
     )
     ws_saidas.cell(row=r, column=9).value = formula_piscofins_debito
@@ -507,13 +507,13 @@ for i, mes in enumerate(MESES):
     ws_apuracao.cell(row=r, column=COL_MES, value=mes).alignment = Estilos.ALINHAMENTO_CENTRO
     
     # Coluna B: Créditos do Mês (ICMS)
-    # =SOMARPRODUTO((Entradas!B:B=A{r})*(Entradas!I:I))
-    formula_credito_icms = f'=SOMARPRODUTO((Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*(Entradas!I{linha_dados_inicio_entradas}:I{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}))'
+    # =SUMPRODUCT((Entradas!B:B=A{r})*(Entradas!I:I))
+    formula_credito_icms = f'=SUMPRODUCT((Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*(Entradas!I{linha_dados_inicio_entradas}:I{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}))'
     ws_apuracao.cell(row=r, column=COL_CREDITO_MES_ICMS, value=formula_credito_icms).number_format = '#,##0.00'
     
     # Coluna C: Débitos do Mês (ICMS)
-    # =SOMARPRODUTO((Saídas!B:B=A{r})*(Saídas!H:H))
-    formula_debito_icms = f'=SOMARPRODUTO((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!H{linha_dados_inicio_saidas}:H{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
+    # =SUMPRODUCT((Saídas!B:B=A{r})*(Saídas!H:H))
+    formula_debito_icms = f'=SUMPRODUCT((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!H{linha_dados_inicio_saidas}:H{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
     ws_apuracao.cell(row=r, column=COL_DEBITO_MES_ICMS, value=formula_debito_icms).number_format = '#,##0.00'
     
     # Coluna F: Saldo Inicial
@@ -524,26 +524,26 @@ for i, mes in enumerate(MESES):
     ws_apuracao.cell(row=r, column=COL_SALDO_INICIAL_ICMS, value=formula_saldo_inicial_icms).number_format = '#,##0.00'
     
     # Coluna D: ICMS A Pagar
-    # =MÁXIMO(0; C{r} - B{r} - F{r})
-    formula_a_pagar_icms = f'=MÁXIMO(0;C{r}-B{r}-F{r})'
+    # =MAX(0, C{r} - B{r} - F{r})
+    formula_a_pagar_icms = f'=MAX(0,C{r}-B{r}-F{r})'
     ws_apuracao.cell(row=r, column=COL_A_PAGAR_ICMS, value=formula_a_pagar_icms).number_format = '#,##0.00'
     ws_apuracao.cell(row=r, column=COL_A_PAGAR_ICMS).fill = Estilos.PREENCHIMENTO_ALERTA # Destaque para valor a pagar
     
     # Coluna E: Crédito do Mês (Crédito Acumulado Gerado no Mês)
-    # =MÁXIMO(0; B{r} - C{r})
-    formula_credito_mes_apurado_icms = f'=MÁXIMO(0;B{r}-C{r})'
+    # =MAX(0, B{r} - C{r})
+    formula_credito_mes_apurado_icms = f'=MAX(0,B{r}-C{r})'
     ws_apuracao.cell(row=r, column=COL_CREDITO_MES_APURADO_ICMS, value=formula_credito_mes_apurado_icms).number_format = '#,##0.00'
     
     # Coluna G: Saldo Final (Crédito Acumulado)
-    # =MÁXIMO(0; F{r} + E{r} - D{r})
-    formula_saldo_final_icms = f'=MÁXIMO(0;F{r}+E{r}-D{r})'
+    # =MAX(0, F{r} + E{r} - D{r})
+    formula_saldo_final_icms = f'=MAX(0,F{r}+E{r}-D{r})'
     ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_ICMS, value=formula_saldo_final_icms).number_format = '#,##0.00'
     ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_ICMS).fill = Estilos.PREENCHIMENTO_DESTAQUE
     
     # Coluna H: ICMS Cheio (19%)
     # Soma do Valor da Nota * 19% para linhas com %ICMS=19 e Benefício=Sim
     formula_icms_cheio = (
-        f'=SOMARPRODUTO('
+        f'=SUMPRODUCT('
         f'(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*'
         f'(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="19%")*'
         f'(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim")*'
@@ -556,7 +556,7 @@ for i, mes in enumerate(MESES):
     # Coluna I: ICMS Efetivo (11%)
     # Soma do Valor da Nota * 11% para linhas com %ICMS=19 e Benefício=Sim
     formula_icms_efetivo = (
-        f'=SOMARPRODUTO('
+        f'=SUMPRODUCT('
         f'(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*'
         f'(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="19%")*'
         f'(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim")*'
@@ -578,8 +578,8 @@ for i, mes in enumerate(MESES):
     ws_apuracao.cell(row=r, column=COL_PROTEGE_ICMS).fill = Estilos.PREENCHIMENTO_ALERTA # Destaque para valor a pagar
     
     # Coluna L: Crédito a Transportar (Resumo)
-    # =MÁXIMO(0; B{r} + F{r} - C{r})
-    formula_credito_transportar_icms = f'=MÁXIMO(0;B{r}+F{r}-C{r})'
+    # =MAX(0, B{r} + F{r} - C{r})
+    formula_credito_transportar_icms = f'=MAX(0,B{r}+F{r}-C{r})'
     ws_apuracao.cell(row=r, column=COL_CREDITO_TRANSPORTAR_ICMS, value=formula_credito_transportar_icms).number_format = '#,##0.00'
     ws_apuracao.cell(row=r, column=COL_CREDITO_TRANSPORTAR_ICMS).fill = Estilos.PREENCHIMENTO_DESTAQUE
 
@@ -623,11 +623,11 @@ for i, mes in enumerate(MESES):
     ws_apuracao.cell(row=r, column=COL_MES, value=mes).alignment = Estilos.ALINHAMENTO_CENTRO
     
     # Coluna B: Créditos do Mês (PIS/COFINS)
-    formula_credito_piscofins = f'=SOMARPRODUTO((Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*(Entradas!J{linha_dados_inicio_entradas}:J{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}))'
+    formula_credito_piscofins = f'=SUMPRODUCT((Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*(Entradas!J{linha_dados_inicio_entradas}:J{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}))'
     ws_apuracao.cell(row=r, column=COL_CREDITO_MES_PISCOFINS, value=formula_credito_piscofins).number_format = '#,##0.00'
     
     # Coluna C: Débitos do Mês (PIS/COFINS)
-    formula_debito_piscofins = f'=SOMARPRODUTO((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!I{linha_dados_inicio_saidas}:I{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
+    formula_debito_piscofins = f'=SUMPRODUCT((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!I{linha_dados_inicio_saidas}:I{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
     ws_apuracao.cell(row=r, column=COL_DEBITO_MES_PISCOFINS, value=formula_debito_piscofins).number_format = '#,##0.00'
     
     # Coluna F: Saldo Inicial
@@ -638,19 +638,19 @@ for i, mes in enumerate(MESES):
     ws_apuracao.cell(row=r, column=COL_SALDO_INICIAL_PISCOFINS, value=formula_saldo_inicial_piscofins).number_format = '#,##0.00'
     
     # Coluna D: PIS/COFINS A Pagar
-    # =MÁXIMO(0; C{r} - B{r} - F{r})
-    formula_a_pagar_piscofins = f'=MÁXIMO(0;C{r}-B{r}-F{r})'
+    # =MAX(0, C{r} - B{r} - F{r})
+    formula_a_pagar_piscofins = f'=MAX(0,C{r}-B{r}-F{r})'
     ws_apuracao.cell(row=r, column=COL_A_PAGAR_PISCOFINS, value=formula_a_pagar_piscofins).number_format = '#,##0.00'
     ws_apuracao.cell(row=r, column=COL_A_PAGAR_PISCOFINS).fill = Estilos.PREENCHIMENTO_ALERTA
     
     # Coluna E: Crédito do Mês (Crédito Acumulado Gerado no Mês)
-    # =MÁXIMO(0; B{r} - C{r})
-    formula_credito_mes_apurado_piscofins = f'=MÁXIMO(0;B{r}-C{r})'
+    # =MAX(0, B{r} - C{r})
+    formula_credito_mes_apurado_piscofins = f'=MAX(0,B{r}-C{r})'
     ws_apuracao.cell(row=r, column=COL_CREDITO_MES_APURADO_PISCOFINS, value=formula_credito_mes_apurado_piscofins).number_format = '#,##0.00'
     
     # Coluna G: Saldo Final (Crédito Acumulado)
-    # =MÁXIMO(0; F{r} + E{r} - D{r})
-    formula_saldo_final_piscofins = f'=MÁXIMO(0;F{r}+E{r}-D{r})'
+    # =MAX(0, F{r} + E{r} - D{r})
+    formula_saldo_final_piscofins = f'=MAX(0,F{r}+E{r}-D{r})'
     ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_PISCOFINS, value=formula_saldo_final_piscofins).number_format = '#,##0.00'
     ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_PISCOFINS).fill = Estilos.PREENCHIMENTO_DESTAQUE
 
@@ -691,15 +691,15 @@ for i, mes in enumerate(MESES):
     ws_apuracao.cell(row=r, column=COL_MES, value=mes).alignment = Estilos.ALINHAMENTO_CENTRO
     
     # Coluna B: Receita Bruta
-    # =SOMARPRODUTO((Saídas!B:B=A{r})*(Saídas!E:E))
-    formula_receita_bruta = f'=SOMARPRODUTO((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
+    # =SUMPRODUCT((Saídas!B:B=A{r})*(Saídas!E:E))
+    formula_receita_bruta = f'=SUMPRODUCT((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
     ws_apuracao.cell(row=r, column=COL_RECEITA_BRUTA, value=formula_receita_bruta).number_format = '#,##0.00'
     
     # Coluna C: CMV (AGORA AUTOMÁTICO)
-    # =SOMARPRODUTO((Entradas!B:B=A{r})*(Entradas!G:G="Compra de Mercadoria")*(Entradas!F:F))
+    # =SUMPRODUCT((Entradas!B:B=A{r})*(Entradas!G:G="Compra de Mercadoria")*(Entradas!F:F))
     # Soma o Custo da Mercadoria (Coluna F) das Entradas, filtrando por Competência (Coluna B) e Classificação (Coluna G) = "Compra de Mercadoria"
     formula_cmv = (
-        f'=SOMARPRODUTO('
+        f'=SUMPRODUCT('
         f'(Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*'
         f'(Entradas!G{linha_dados_inicio_entradas}:G{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}="Compra de Mercadoria")*'
         f'(Entradas!F{linha_dados_inicio_entradas}:F{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1})'
@@ -852,8 +852,8 @@ linha_atual_resumo += 1
 # Alerta: Benefício PROTEGE marcado com alíquota diferente de 19%
 ws_resumo[f'A{linha_atual_resumo}'] = "Benefício PROTEGE marcado com % ≠ 19%"
 formula_alerta_protege = (
-    f'=SE(SOMARPRODUTO(--(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim");'
-    f'--(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}<>"19%"))>0;'
+    f'=IF(SUMPRODUCT(--(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim"),'
+    f'--(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}<>"19%"))>0,'
     f'"⚠ ERRO: Verificar! (Linhas na aba Saídas)","✓ OK")'
 )
 ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_protege
@@ -865,8 +865,8 @@ linha_atual_resumo += 1
 # Alerta: Competência (mm/aaaa) ausente onde Valor da Nota está preenchido
 ws_resumo[f'A{linha_atual_resumo}'] = "Competência (mm/aaaa) ausente (Entradas)"
 formula_alerta_comp_entrada = (
-    f'=SE(SOMARPRODUTO(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0);'
-    f'--(Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'=IF(SUMPRODUCT(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0),'
+    f'--(Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0,'
     f'"⚠ ERRO: Preencher! (Linhas na aba Entradas)","✓ OK")'
 )
 ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_comp_entrada
@@ -877,8 +877,8 @@ linha_atual_resumo += 1
 
 ws_resumo[f'A{linha_atual_resumo}'] = "Competência (mm/aaaa) ausente (Saídas)"
 formula_alerta_comp_saida = (
-    f'=SE(SOMARPRODUTO(--(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}>0);'
-    f'--(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'=IF(SUMPRODUCT(--(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}>0),'
+    f'--(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=""))>0,'
     f'"⚠ ERRO: Preencher! (Linhas na aba Saídas)","✓ OK")'
 )
 ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_comp_saida
@@ -890,8 +890,8 @@ linha_atual_resumo += 1
 # Alerta: Classificação ausente em Entradas
 ws_resumo[f'A{linha_atual_resumo}'] = "Classificação ausente (Entradas)"
 formula_alerta_classificacao = (
-    f'=SE(SOMARPRODUTO(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0);'
-    f'--(Entradas!G{linha_dados_inicio_entradas}:G{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'=IF(SUMPRODUCT(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0),'
+    f'--(Entradas!G{linha_dados_inicio_entradas}:G{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0,'
     f'"⚠ ERRO: Preencher! (Linhas na aba Entradas)","✓ OK")'
 )
 ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_classificacao
@@ -903,8 +903,8 @@ linha_atual_resumo += 1
 # Alerta: Data ausente em Entradas
 ws_resumo[f'A{linha_atual_resumo}'] = "Data ausente (Entradas)"
 formula_alerta_data_entrada = (
-    f'=SE(SOMARPRODUTO(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0);'
-    f'--(Entradas!A{linha_dados_inicio_entradas}:A{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'=IF(SUMPRODUCT(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0),'
+    f'--(Entradas!A{linha_dados_inicio_entradas}:A{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0,'
     f'"⚠ ERRO: Preencher! (Linhas na aba Entradas)","✓ OK")'
 )
 ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_data_entrada
@@ -916,8 +916,8 @@ linha_atual_resumo += 1
 # Alerta: Data ausente em Saídas
 ws_resumo[f'A{linha_atual_resumo}'] = "Data ausente (Saídas)"
 formula_alerta_data_saida = (
-    f'=SE(SOMARPRODUTO(--(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}>0);'
-    f'--(Saídas!A{linha_dados_inicio_saidas}:A{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'=IF(SUMPRODUCT(--(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}>0),'
+    f'--(Saídas!A{linha_dados_inicio_saidas}:A{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=""))>0,'
     f'"⚠ ERRO: Preencher! (Linhas na aba Saídas)","✓ OK")'
 )
 ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_data_saida

@@ -1,0 +1,1080 @@
+
+import os
+from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, Protection
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.utils import get_column_letter
+
+# =============================================================================
+# CONFIGURAÇÕES GLOBAIS
+# =============================================================================
+# ATENÇÃO: O caminho abaixo foi configurado para o diretório de rede/drive "U:"
+# conforme solicitado. Se o script for executado em um ambiente diferente,
+# esta linha DEVE ser ajustada.
+CAMINHO_SAIDA = "U:\\ACOMPANHAMENTO GH"
+# CAMINHO_SAIDA = os.path.join(os.path.expanduser("~"), "Downloads") # Exemplo para salvar na pasta Downloads
+NOME_ARQUIVO = "Planilha_ICMS_PISCOFINS_Apuracao.xlsx" # Nome do arquivo atualizado
+CAMINHO_COMPLETO = os.path.join(CAMINHO_SAIDA, NOME_ARQUIVO)
+
+PROTEGE_PERCENTUAL = 0.15  # 15% fixo e imutável por legislação
+PISCOFINS_ALIQUOTA = 0.0960 # 9.60%
+PERIODO_PADRAO = datetime.now().strftime("%m/%Y")
+RAZAO_SOCIAL_PADRAO = "NOME DA EMPRESA AQUI"
+CNPJ_PADRAO = "00.000.000/0001-00"
+
+# Alíquotas padrão para validações
+ALIQUOTAS_ENTRADA = ["4%", "7%", "12%", "19%"]
+ALIQUOTAS_SAIDA = ["12%", "19%"]
+CLASSIFICACOES_ENTRADA = [
+    "Compra de Mercadoria", 
+    "Uso e Consumo", 
+    "Combustíveis e Lubrificantes", 
+    "Transferência entre Empresas", 
+    "Frete de Mercadorias"
+]
+
+QTD_LINHAS_PADRAO = 50 # Aumentado para 50 linhas para melhor usabilidade
+
+# =============================================================================
+# ESTILOS DA PLANILHA
+# =============================================================================
+class Estilos:
+    FONTE_CABECALHO = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
+    PREENCHIMENTO_CABECALHO = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+
+    FONTE_TITULO_SECAO = Font(name='Calibri', size=14, bold=True, color="1F4E78")
+    PREENCHIMENTO_TITULO_SECAO = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
+    PREENCHIMENTO_EDITAVEL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # Amarelo claro
+    PREENCHIMENTO_TOTAL = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid") # Azul claro
+    PREENCHIMENTO_ALERTA = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid") # Vermelho claro
+    PREENCHIMENTO_DESTAQUE = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # Verde claro
+    PREENCHIMENTO_PISCOFINS = PatternFill(start_color="DAE3F3", end_color="DAE3F3", fill_type="solid") # Azul muito claro
+
+    BORDA_FINA = Border(
+        left=Side(style='thin'), 
+        right=Side(style='thin'),
+        top=Side(style='thin'), 
+        bottom=Side(style='thin')
+    )
+    BORDA_DUPLA_BAIXO = Border(
+        left=Side(style='thin'), 
+        right=Side(style='thin'),
+        top=Side(style='thin'), 
+        bottom=Side(style='double')
+    )
+
+    ALINHAMENTO_CENTRO = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    ALINHAMENTO_ESQUERDA = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    ALINHAMENTO_DIREITA = Alignment(horizontal='right', vertical='center', wrap_text=True)
+
+# =============================================================================
+# FUNÇÕES AUXILIARES
+# =============================================================================
+def add_named_range(wb, name: str, sheet_title: str, cell_ref: str):
+    """
+    Cria/atualiza um Nome Definido (Named Range) apontando para uma célula.
+    Útil para referenciar células em fórmulas de outras abas.
+    """
+    try:
+        attr_text = f"'{sheet_title}'!{cell_ref}"
+        dn = DefinedName(name=name, attr_text=attr_text)
+        
+        # Remove o nome se já existir para evitar duplicatas
+        if name in wb.defined_names:
+            del wb.defined_names[name]
+        
+        wb.defined_names.append(dn)
+    except Exception as e:
+        print(f"⚠ Aviso: Não foi possível criar nome definido '{name}': {e}")
+
+
+def adicionar_cabecalho_padrao(ws, titulo_aba):
+    """
+    Adiciona um cabeçalho padrão com informações da empresa e período em uma aba.
+    Retorna a próxima linha disponível para conteúdo.
+    """
+    ws.merge_cells('A1:H1')
+    ws['A1'] = f"APURAÇÃO FISCAL - {titulo_aba}"
+    ws['A1'].font = Font(name='Calibri', size=16, bold=True, color="1F4E78")
+    ws['A1'].alignment = Estilos.ALINHAMENTO_CENTRO
+
+    ws['A2'] = "Período:"
+    ws['B2'] = PERIODO_PADRAO
+    ws['A3'] = "Razão Social:"
+    ws['B3'] = RAZAO_SOCIAL_PADRAO
+    ws['A4'] = "CNPJ:"
+    ws['B4'] = CNPJ_PADRAO
+
+    for cell_ref in ['A2', 'A3', 'A4']:
+        ws[cell_ref].font = Font(bold=True)
+
+    return 6 # Retorna a linha onde o conteúdo principal deve começar
+
+
+def configurar_validacao_dados(ws, celulas_alvo: str, lista_opcoes: list, titulo: str, mensagem_erro: str):
+    """
+    Configura uma validação de dados do tipo lista para um intervalo de células.
+    """
+    # Cria a string da lista de opções
+    opcoes_str = ",".join(lista_opcoes)
+    
+    dv = DataValidation(
+        type="list",
+        formula1=f'"{opcoes_str}"',
+        allow_blank=True,
+        showDropDown=True
+    )
+    dv.prompt = f"Selecione {titulo}"
+    dv.promptTitle = titulo
+    dv.error = mensagem_erro
+    dv.errorTitle = "Entrada Inválida"
+    ws.add_data_validation(dv)
+    dv.add(celulas_alvo)
+
+
+def proteger_celulas_formula(ws, linha_inicio_dados: int, qtd_linhas: int, colunas_formula: list, colunas_editaveis: list, max_col: int):
+    """
+    Define a proteção de células: bloqueia células com fórmulas e desbloqueia células para entrada de dados.
+    A proteção da planilha deve ser aplicada separadamente no Excel, se desejado.
+    """
+    # Desbloqueia todas as células por padrão (necessário para que a proteção de folha funcione)
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            ws.cell(row=r, column=c).protection = Protection(locked=False)
+            
+    # Aplica o bloqueio apenas nas células de fórmula
+    for r in range(linha_inicio_dados, linha_inicio_dados + qtd_linhas):
+        for c in range(1, max_col + 1):
+            cell = ws.cell(row=r, column=c)
+            if c in colunas_formula:
+                cell.protection = Protection(locked=True)
+            # As células editáveis já estão desbloqueadas pelo loop inicial
+            
+    # Bloqueia o cabeçalho e outras áreas não editáveis
+    for r in range(1, linha_inicio_dados):
+        for c in range(1, max_col + 1):
+            ws.cell(row=r, column=c).protection = Protection(locked=True)
+
+# =============================================================================
+# CRIAÇÃO DA PLANILHA
+# =============================================================================
+print("🔄 Iniciando criação da planilha de Apuração Fiscal...")
+
+# Cria o diretório de saída se não existir
+try:
+    # No ambiente Windows do usuário, o caminho deve ser: CAMINHO_SAIDA = "U:\\ACOMPANHAMENTO GH"
+    os.makedirs(CAMINHO_SAIDA, exist_ok=True)
+except Exception as e:
+    print(f"⚠ Aviso: Não foi possível criar o diretório {CAMINHO_SAIDA}. O script continuará, mas verifique o caminho no Windows.")
+    # Para o teste no sandbox, vamos usar um caminho temporário
+    if not os.path.exists(CAMINHO_SAIDA):
+        CAMINHO_SAIDA = os.path.join(os.path.expanduser("~"), "temp_output")
+        os.makedirs(CAMINHO_SAIDA, exist_ok=True)
+        CAMINHO_COMPLETO = os.path.join(CAMINHO_SAIDA, NOME_ARQUIVO)
+        print(f"⚠ Aviso: Usando caminho temporário para teste: {CAMINHO_COMPLETO}")
+
+
+wb = Workbook()
+wb.remove(wb.active) # Remove a aba padrão criada
+
+# =============================================================================
+# ABA 1: ENTRADAS (CRÉDITOS)
+# =============================================================================
+print("📊 Criando aba 'Entradas'...")
+ws_entradas = wb.create_sheet("Entradas")
+linha_inicial_entradas = adicionar_cabecalho_padrao(ws_entradas, "ENTRADAS (CRÉDITOS ICMS/PIS/COFINS)")
+linha_atual_entradas = linha_inicial_entradas + 1
+
+# Colunas: A(Data), B(Competência), C(Nº NF), D(Produto), E(Valor), F(Custo Mercadoria), G(Classificação), H(% ICMS), I(ICMS Crédito), J(PIS/COFINS Crédito), K(Indicador Crédito), L(Observações)
+cabecalhos_entradas = [
+    "Data Entrada", "Competência (mm/aaaa)", "Nº NF", "Produto/Descrição", "Valor da Nota (R$)",
+    "Custo da Mercadoria (R$)", "Classificação", "% ICMS", "ICMS Crédito (R$)", "PIS/COFINS Crédito (R$)", "Indicador Crédito", "Observações"
+]
+
+for col_num, cab in enumerate(cabecalhos_entradas, 1):
+    c = ws_entradas.cell(row=linha_atual_entradas, column=col_num, value=cab)
+    c.font = Estilos.FONTE_CABECALHO
+    c.fill = Estilos.PREENCHIMENTO_CABECALHO
+    c.alignment = Estilos.ALINHAMENTO_CENTRO
+    c.border = Estilos.BORDA_FINA
+
+linha_dados_inicio_entradas = linha_atual_entradas + 1
+MAX_COL_ENTRADAS = len(cabecalhos_entradas)
+
+# Preenche as linhas de dados com estilos e fórmulas
+for i in range(QTD_LINHAS_PADRAO):
+    r = linha_dados_inicio_entradas + i
+    
+    # Colunas editáveis (amarelas)
+    colunas_editaveis_entradas = [1, 2, 3, 4, 5, 6, 7, 8, 12] # A, B, C, D, E, F, G, H, L
+    for col_idx in colunas_editaveis_entradas:
+        cell = ws_entradas.cell(row=r, column=col_idx)
+        cell.fill = Estilos.PREENCHIMENTO_EDITAVEL
+        cell.border = Estilos.BORDA_FINA
+
+    # Formatação de números e datas
+    ws_entradas.cell(row=r, column=1).number_format = 'DD/MM/YYYY'
+    ws_entradas.cell(row=r, column=2).number_format = 'MM/YYYY'
+    ws_entradas.cell(row=r, column=5).number_format = '#,##0.00' # Valor da Nota
+    ws_entradas.cell(row=r, column=6).number_format = '#,##0.00' # Custo da Mercadoria (NOVO)
+    ws_entradas.cell(row=r, column=9).number_format = '#,##0.00' # ICMS Crédito
+    ws_entradas.cell(row=r, column=10).number_format = '#,##0.00' # PIS/COFINS Crédito
+
+    # Colunas de resultado (ICMS Crédito, PIS/COFINS Crédito, Indicador Crédito)
+    colunas_formula_entradas = [9, 10, 11] # I, J, K
+    for col_idx in colunas_formula_entradas:
+        ws_entradas.cell(row=r, column=col_idx).fill = Estilos.PREENCHIMENTO_TOTAL
+        ws_entradas.cell(row=r, column=col_idx).border = Estilos.BORDA_FINA
+
+    # I: ICMS Crédito
+    # =SE(E{r}<>""; SE(G{r}="Compra de Mercadoria"; E{r}*VALOR(SUBSTITUIR(H{r};"%";""))/100; 0); 0)
+    formula_icms_credito = (
+        f'=SE(E{r}<>"";'
+        f'SE(G{r}="Compra de Mercadoria";'
+        f'E{r}*VALOR(SUBSTITUIR(H{r};"%";""))/100;'
+        f'0);'
+        f'0)'
+    )
+    ws_entradas.cell(row=r, column=9).value = formula_icms_credito
+
+    # J: PIS/COFINS Crédito
+    # =SE(E{r}<>""; SE(G{r}="Compra de Mercadoria"; E{r}*{PISCOFINS_ALIQUOTA}; 0); 0)
+    formula_piscofins_credito = (
+        f'=SE(E{r}<>"";'
+        f'SE(G{r}="Compra de Mercadoria";'
+        f'E{r}*{PISCOFINS_ALIQUOTA};'
+        f'0);'
+        f'0)'
+    )
+    ws_entradas.cell(row=r, column=10).value = formula_piscofins_credito
+    ws_entradas.cell(row=r, column=10).fill = Estilos.PREENCHIMENTO_PISCOFINS
+
+    # K: Indicador Crédito
+    # =SE(E{r}<>""; SE(G{r}<>"Compra de Mercadoria"; "Sem Crédito"; "Com Crédito"); "")
+    formula_indicador_credito = (
+        f'=SE(E{r}<>"";'
+        f'SE(G{r}<>"Compra de Mercadoria";'
+        f'"Sem Crédito";'
+        f'"Com Crédito");'
+        f'""'
+    )
+    ws_entradas.cell(row=r, column=11).value = formula_indicador_credito
+    ws_entradas.cell(row=r, column=11).alignment = Estilos.ALINHAMENTO_CENTRO
+    
+    # Adiciona formatação condicional para destacar "Sem Crédito"
+    # openpyxl não suporta formatação condicional diretamente, mas o Excel fará isso.
+    # A cor de fundo será aplicada no Excel via regra de formatação condicional.
+
+# Adiciona tabela formatada
+tab_entradas = Table(
+    displayName="tbEntradas",
+    ref=f"A{linha_atual_entradas}:{get_column_letter(MAX_COL_ENTRADAS)}{linha_dados_inicio_entradas + QTD_LINHAS_PADRAO - 1}"
+)
+tab_entradas.tableStyleInfo = TableStyleInfo(
+    name="TableStyleMedium2", 
+    showFirstColumn=False,
+    showLastColumn=False, 
+    showRowStripes=True, 
+    showColumnStripes=False
+)
+ws_entradas.add_table(tab_entradas)
+
+# Validação de dados para % ICMS
+configurar_validacao_dados(
+    ws_entradas,
+    f"H{linha_dados_inicio_entradas}:H{linha_dados_inicio_entradas + QTD_LINHAS_PADRAO - 1}",
+    ALIQUOTAS_ENTRADA,
+    "% ICMS",
+    "Valor inválido! Selecione uma das alíquotas permitidas: 4%, 7%, 12% ou 19%"
+)
+
+# Validação de dados para Classificação
+configurar_validacao_dados(
+    ws_entradas,
+    f"G{linha_dados_inicio_entradas}:G{linha_dados_inicio_entradas + QTD_LINHAS_PADRAO - 1}",
+    CLASSIFICACOES_ENTRADA,
+    "Classificação",
+    "Valor inválido! Selecione uma das classificações da lista."
+)
+
+# Validação de dados para Competência (mm/aaaa)
+dv_competencia = DataValidation(
+    type="textLength",
+    operator="equal",
+    formula1="7",
+    allow_blank=True
+)
+dv_competencia.prompt = "Formato: mm/aaaa"
+dv_competencia.promptTitle = "Competência"
+dv_competencia.error = "Formato inválido. Use mm/aaaa (ex: 01/2024)."
+dv_competencia.errorTitle = "Competência Inválida"
+ws_entradas.add_data_validation(dv_competencia)
+dv_competencia.add(f"B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas + QTD_LINHAS_PADRAO - 1}")
+
+# Ajusta largura das colunas
+ws_entradas.column_dimensions['A'].width = 14
+ws_entradas.column_dimensions['B'].width = 18
+ws_entradas.column_dimensions['C'].width = 12
+ws_entradas.column_dimensions['D'].width = 30
+ws_entradas.column_dimensions['E'].width = 18
+ws_entradas.column_dimensions['F'].width = 25 # Custo da Mercadoria
+ws_entradas.column_dimensions['G'].width = 30
+ws_entradas.column_dimensions['H'].width = 10
+ws_entradas.column_dimensions['I'].width = 20
+ws_entradas.column_dimensions['J'].width = 25
+ws_entradas.column_dimensions['K'].width = 18
+ws_entradas.column_dimensions['L'].width = 30
+ws_entradas.freeze_panes = f"A{linha_atual_entradas + 1}"
+
+# =============================================================================
+# ABA 2: SAÍDAS (DÉBITOS)
+# =============================================================================
+print("📊 Criando aba 'Saídas'...")
+ws_saidas = wb.create_sheet("Saídas")
+linha_inicial_saidas = adicionar_cabecalho_padrao(ws_saidas, "SAÍDAS (DÉBITOS ICMS/PIS/COFINS)")
+linha_atual_saidas = linha_inicial_saidas + 1
+
+# Colunas: A(Data), B(Competência), C(Nº NF), D(Produto), E(Valor), F(% ICMS), G(Benefício PROTEGE), H(ICMS Débito), I(PIS/COFINS Débito), J(Observações)
+cabecalhos_saidas = [
+    "Data Saída", "Competência (mm/aaaa)", "Nº NF", "Produto/Descrição", "Valor da Nota (R$)",
+    "% ICMS", "Venda com Benefício PROTEGE?", "ICMS Débito (R$)", "PIS/COFINS Débito (R$)", "Observações"
+]
+
+for col_num, cab in enumerate(cabecalhos_saidas, 1):
+    c = ws_saidas.cell(row=linha_atual_saidas, column=col_num, value=cab)
+    c.font = Estilos.FONTE_CABECALHO
+    c.fill = Estilos.PREENCHIMENTO_CABECALHO
+    c.alignment = Estilos.ALINHAMENTO_CENTRO
+    c.border = Estilos.BORDA_FINA
+
+linha_dados_inicio_saidas = linha_atual_saidas + 1
+MAX_COL_SAIDAS = len(cabecalhos_saidas)
+
+# Preenche as linhas de dados com estilos e fórmulas
+for i in range(QTD_LINHAS_PADRAO):
+    r = linha_dados_inicio_saidas + i
+    
+    # Colunas editáveis (amarelas)
+    colunas_editaveis_saidas = [1, 2, 3, 4, 5, 6, 7, 10] # A, B, C, D, E, F, G, J
+    for col_idx in colunas_editaveis_saidas:
+        cell = ws_saidas.cell(row=r, column=col_idx)
+        cell.fill = Estilos.PREENCHIMENTO_EDITAVEL
+        cell.border = Estilos.BORDA_FINA
+
+    # Formatação de números e datas
+    ws_saidas.cell(row=r, column=1).number_format = 'DD/MM/YYYY'
+    ws_saidas.cell(row=r, column=2).number_format = 'MM/YYYY'
+    ws_saidas.cell(row=r, column=5).number_format = '#,##0.00' # Valor da Nota
+    ws_saidas.cell(row=r, column=8).number_format = '#,##0.00' # ICMS Débito
+    ws_saidas.cell(row=r, column=9).number_format = '#,##0.00' # PIS/COFINS Débito
+
+    # Colunas de resultado (ICMS Débito, PIS/COFINS Débito)
+    colunas_formula_saidas = [8, 9] # H, I
+    for col_idx in colunas_formula_saidas:
+        ws_saidas.cell(row=r, column=col_idx).fill = Estilos.PREENCHIMENTO_TOTAL
+        ws_saidas.cell(row=r, column=col_idx).border = Estilos.BORDA_FINA
+    
+    # H: ICMS Débito
+    # Se Benefício=Sim E %ICMS=19%, usa 11% (base reduzida). Senão, usa %ICMS normal.
+    # =SE(E{r}<>""; SE(E{r}="19%"; SE(G{r}="Sim"; E{r}*0.11; E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100); E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100); 0)
+    formula_icms_debito = (
+        f'=SE(E{r}<>"";'
+        f'SE(E{r}="19%";'
+        f'SE(G{r}="Sim";'
+        f'E{r}*0.11;' # 11% para 19% com PROTEGE
+        f'E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100);' # Alíquota normal
+        f'E{r}*VALOR(SUBSTITUIR(F{r};"%";""))/100);' # Alíquota normal
+        f'0)'
+    )
+    ws_saidas.cell(row=r, column=8).value = formula_icms_debito
+
+    # I: PIS/COFINS Débito
+    # =SE(E{r}<>""; E{r}*{PISCOFINS_ALIQUOTA}; 0)
+    formula_piscofins_debito = (
+        f'=SE(E{r}<>"";'
+        f'E{r}*{PISCOFINS_ALIQUOTA};'
+        f'0)'
+    )
+    ws_saidas.cell(row=r, column=9).value = formula_piscofins_debito
+    ws_saidas.cell(row=r, column=9).fill = Estilos.PREENCHIMENTO_PISCOFINS
+
+# Adiciona tabela formatada
+tab_saidas = Table(
+    displayName="tbSaidas",
+    ref=f"A{linha_atual_saidas}:{get_column_letter(MAX_COL_SAIDAS)}{linha_dados_inicio_saidas + QTD_LINHAS_PADRAO - 1}"
+)
+tab_saidas.tableStyleInfo = TableStyleInfo(
+    name="TableStyleMedium2", 
+    showFirstColumn=False,
+    showLastColumn=False, 
+    showRowStripes=True, 
+    showColumnStripes=False
+)
+ws_saidas.add_table(tab_saidas)
+
+# Validação de dados para % ICMS
+configurar_validacao_dados(
+    ws_saidas,
+    f"F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas + QTD_LINHAS_PADRAO - 1}",
+    ALIQUOTAS_SAIDA,
+    "% ICMS",
+    "Valor inválido! Selecione uma das alíquotas permitidas: 12% ou 19%"
+)
+
+# Validação de dados para Benefício PROTEGE
+configurar_validacao_dados(
+    ws_saidas,
+    f"G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas + QTD_LINHAS_PADRAO - 1}",
+    ["Sim", "Não"],
+    "Benefício PROTEGE",
+    "Valor inválido! Selecione 'Sim' ou 'Não'."
+)
+
+# Validação de dados para Competência (mm/aaaa)
+ws_saidas.add_data_validation(dv_competencia)
+dv_competencia.add(f"B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas + QTD_LINHAS_PADRAO - 1}")
+
+# Ajusta largura das colunas
+ws_saidas.column_dimensions['A'].width = 14
+ws_saidas.column_dimensions['B'].width = 18
+ws_saidas.column_dimensions['C'].width = 12
+ws_saidas.column_dimensions['D'].width = 30
+ws_saidas.column_dimensions['E'].width = 18
+ws_saidas.column_dimensions['F'].width = 10
+ws_saidas.column_dimensions['G'].width = 25
+ws_saidas.column_dimensions['H'].width = 20
+ws_saidas.column_dimensions['I'].width = 25
+ws_saidas.column_dimensions['J'].width = 30
+ws_saidas.freeze_panes = f"A{linha_atual_saidas + 1}"
+
+# =============================================================================
+# ABA 3: APURAÇÃO MENSAL (ICMS e PIS/COFINS)
+# =============================================================================
+print("📊 Criando aba 'Apuração Mensal'...")
+ws_apuracao = wb.create_sheet("Apuração Mensal")
+linha_inicial_apuracao = adicionar_cabecalho_padrao(ws_apuracao, "APURAÇÃO MENSAL E RESULTADO")
+linha_atual_apuracao = linha_inicial_apuracao
+
+MESES = [
+    "01/2024", "02/2024", "03/2024", "04/2024", "05/2024", "06/2024", 
+    "07/2024", "08/2024", "09/2024", "10/2024", "11/2024", "12/2024"
+]
+COL_MES = 1 # Coluna A
+
+# --- ICMS ---
+ws_apuracao.merge_cells(f'A{linha_atual_apuracao}:L{linha_atual_apuracao}')
+ws_apuracao[f'A{linha_atual_apuracao}'] = "ICMS - APURAÇÃO MENSAL E CRÉDITO ACUMULADO"
+ws_apuracao[f'A{linha_atual_apuracao}'].font = Estilos.FONTE_TITULO_SECAO
+ws_apuracao[f'A{linha_atual_apuracao}'].fill = Estilos.PREENCHIMENTO_TITULO_SECAO
+ws_apuracao[f'A{linha_atual_apuracao}'].alignment = Estilos.ALINHAMENTO_ESQUERDA
+linha_atual_apuracao += 1
+
+cabecalhos_icms = [
+    "Competência", "Créditos do Mês (R$)", "Débitos do Mês (R$)", "ICMS A Pagar (R$)", 
+    "Crédito do Mês (R$)", "Saldo Inicial (R$)", "Saldo Final (R$)", 
+    "ICMS Cheio (19%)", "ICMS Efetivo (11%)", "ICMS Desonerado", "PROTEGE a Pagar (R$)",
+    "Crédito a Transportar (R$)" # Coluna de resumo
+]
+COL_CREDITO_MES_ICMS = 2
+COL_DEBITO_MES_ICMS = 3
+COL_A_PAGAR_ICMS = 4
+COL_CREDITO_MES_APURADO_ICMS = 5
+COL_SALDO_INICIAL_ICMS = 6
+COL_SALDO_FINAL_ICMS = 7
+COL_ICMS_CHEIO = 8
+COL_ICMS_EFETIVO = 9
+COL_ICMS_DESONERADO = 10
+COL_PROTEGE_ICMS = 11
+COL_CREDITO_TRANSPORTAR_ICMS = 12
+
+for col_num, cab in enumerate(cabecalhos_icms, 1):
+    c = ws_apuracao.cell(row=linha_atual_apuracao, column=col_num, value=cab)
+    c.font = Estilos.FONTE_CABECALHO
+    c.fill = Estilos.PREENCHIMENTO_CABECALHO
+    c.alignment = Estilos.ALINHAMENTO_CENTRO
+    c.border = Estilos.BORDA_FINA
+linha_atual_apuracao += 1
+LINHA_INICIO_ICMS = linha_atual_apuracao
+
+for i, mes in enumerate(MESES):
+    r = LINHA_INICIO_ICMS + i
+    
+    # Coluna A: Mês
+    ws_apuracao.cell(row=r, column=COL_MES, value=mes).alignment = Estilos.ALINHAMENTO_CENTRO
+    
+    # Coluna B: Créditos do Mês (ICMS)
+    # =SOMARPRODUTO((Entradas!B:B=A{r})*(Entradas!I:I))
+    formula_credito_icms = f'=SOMARPRODUTO((Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*(Entradas!I{linha_dados_inicio_entradas}:I{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}))'
+    ws_apuracao.cell(row=r, column=COL_CREDITO_MES_ICMS, value=formula_credito_icms).number_format = '#,##0.00'
+    
+    # Coluna C: Débitos do Mês (ICMS)
+    # =SOMARPRODUTO((Saídas!B:B=A{r})*(Saídas!H:H))
+    formula_debito_icms = f'=SOMARPRODUTO((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!H{linha_dados_inicio_saidas}:H{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
+    ws_apuracao.cell(row=r, column=COL_DEBITO_MES_ICMS, value=formula_debito_icms).number_format = '#,##0.00'
+    
+    # Coluna F: Saldo Inicial
+    if i == 0:
+        formula_saldo_inicial_icms = '0'
+    else:
+        formula_saldo_inicial_icms = f'=G{r-1}'
+    ws_apuracao.cell(row=r, column=COL_SALDO_INICIAL_ICMS, value=formula_saldo_inicial_icms).number_format = '#,##0.00'
+    
+    # Coluna D: ICMS A Pagar
+    # =MÁXIMO(0; C{r} - B{r} - F{r})
+    formula_a_pagar_icms = f'=MÁXIMO(0;C{r}-B{r}-F{r})'
+    ws_apuracao.cell(row=r, column=COL_A_PAGAR_ICMS, value=formula_a_pagar_icms).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_A_PAGAR_ICMS).fill = Estilos.PREENCHIMENTO_ALERTA # Destaque para valor a pagar
+    
+    # Coluna E: Crédito do Mês (Crédito Acumulado Gerado no Mês)
+    # =MÁXIMO(0; B{r} - C{r})
+    formula_credito_mes_apurado_icms = f'=MÁXIMO(0;B{r}-C{r})'
+    ws_apuracao.cell(row=r, column=COL_CREDITO_MES_APURADO_ICMS, value=formula_credito_mes_apurado_icms).number_format = '#,##0.00'
+    
+    # Coluna G: Saldo Final (Crédito Acumulado)
+    # =MÁXIMO(0; F{r} + E{r} - D{r})
+    formula_saldo_final_icms = f'=MÁXIMO(0;F{r}+E{r}-D{r})'
+    ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_ICMS, value=formula_saldo_final_icms).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_ICMS).fill = Estilos.PREENCHIMENTO_DESTAQUE
+    
+    # Coluna H: ICMS Cheio (19%)
+    # Soma do Valor da Nota * 19% para linhas com %ICMS=19 e Benefício=Sim
+    formula_icms_cheio = (
+        f'=SOMARPRODUTO('
+        f'(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*'
+        f'(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="19%")*'
+        f'(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim")*'
+        f'(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1})*'
+        f'0.19'
+        f')'
+    )
+    ws_apuracao.cell(row=r, column=COL_ICMS_CHEIO, value=formula_icms_cheio).number_format = '#,##0.00'
+    
+    # Coluna I: ICMS Efetivo (11%)
+    # Soma do Valor da Nota * 11% para linhas com %ICMS=19 e Benefício=Sim
+    formula_icms_efetivo = (
+        f'=SOMARPRODUTO('
+        f'(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*'
+        f'(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="19%")*'
+        f'(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim")*'
+        f'(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1})*'
+        f'0.11'
+        f')'
+    )
+    ws_apuracao.cell(row=r, column=COL_ICMS_EFETIVO, value=formula_icms_efetivo).number_format = '#,##0.00'
+    
+    # Coluna J: ICMS Desonerado
+    # ICMS Cheio - ICMS Efetivo (H{r} - I{r})
+    formula_icms_desonerado = f'=H{r}-I{r}'
+    ws_apuracao.cell(row=r, column=COL_ICMS_DESONERADO, value=formula_icms_desonerado).number_format = '#,##0.00'
+    
+    # Coluna K: PROTEGE a Pagar
+    # ICMS Desonerado * 15% (J{r} * 0.15)
+    formula_protege_icms = f'=J{r}*{PROTEGE_PERCENTUAL}'
+    ws_apuracao.cell(row=r, column=COL_PROTEGE_ICMS, value=formula_protege_icms).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_PROTEGE_ICMS).fill = Estilos.PREENCHIMENTO_ALERTA # Destaque para valor a pagar
+    
+    # Coluna L: Crédito a Transportar (Resumo)
+    # =MÁXIMO(0; B{r} + F{r} - C{r})
+    formula_credito_transportar_icms = f'=MÁXIMO(0;B{r}+F{r}-C{r})'
+    ws_apuracao.cell(row=r, column=COL_CREDITO_TRANSPORTAR_ICMS, value=formula_credito_transportar_icms).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_CREDITO_TRANSPORTAR_ICMS).fill = Estilos.PREENCHIMENTO_DESTAQUE
+
+linha_atual_apuracao = LINHA_INICIO_ICMS + len(MESES) + 2
+
+# --- PIS/COFINS ---
+ws_apuracao.merge_cells(f'A{linha_atual_apuracao}:G{linha_atual_apuracao}')
+ws_apuracao[f'A{linha_atual_apuracao}'] = "PIS/COFINS - APURAÇÃO MENSAL E CRÉDITO ACUMULADO (9,60%)"
+ws_apuracao[f'A{linha_atual_apuracao}'].font = Estilos.FONTE_TITULO_SECAO
+ws_apuracao[f'A{linha_atual_apuracao}'].fill = Estilos.PREENCHIMENTO_PISCOFINS
+ws_apuracao[f'A{linha_atual_apuracao}'].alignment = Estilos.ALINHAMENTO_ESQUERDA
+linha_atual_apuracao += 1
+
+cabecalhos_piscofins = [
+    "Competência", "Créditos do Mês (R$)", "Débitos do Mês (R$)", "PIS/COFINS A Pagar (R$)", 
+    "Crédito do Mês (R$)", "Saldo Inicial (R$)", "Saldo Final (R$)"
+]
+COL_CREDITO_MES_PISCOFINS = 2
+COL_DEBITO_MES_PISCOFINS = 3
+COL_A_PAGAR_PISCOFINS = 4
+COL_CREDITO_MES_APURADO_PISCOFINS = 5
+COL_SALDO_INICIAL_PISCOFINS = 6
+COL_SALDO_FINAL_PISCOFINS = 7
+
+# Ajusta as colunas para a seção PIS/COFINS
+COL_PISCOFINS_OFFSET = 0 # Mantém as colunas A-G
+
+for col_num, cab in enumerate(cabecalhos_piscofins, 1):
+    c = ws_apuracao.cell(row=linha_atual_apuracao, column=col_num + COL_PISCOFINS_OFFSET, value=cab)
+    c.font = Estilos.FONTE_CABECALHO
+    c.fill = Estilos.PREENCHIMENTO_PISCOFINS
+    c.alignment = Estilos.ALINHAMENTO_CENTRO
+    c.border = Estilos.BORDA_FINA
+linha_atual_apuracao += 1
+LINHA_INICIO_PISCOFINS = linha_atual_apuracao
+
+for i, mes in enumerate(MESES):
+    r = LINHA_INICIO_PISCOFINS + i
+    
+    # Coluna A: Mês
+    ws_apuracao.cell(row=r, column=COL_MES, value=mes).alignment = Estilos.ALINHAMENTO_CENTRO
+    
+    # Coluna B: Créditos do Mês (PIS/COFINS)
+    formula_credito_piscofins = f'=SOMARPRODUTO((Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*(Entradas!J{linha_dados_inicio_entradas}:J{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}))'
+    ws_apuracao.cell(row=r, column=COL_CREDITO_MES_PISCOFINS, value=formula_credito_piscofins).number_format = '#,##0.00'
+    
+    # Coluna C: Débitos do Mês (PIS/COFINS)
+    formula_debito_piscofins = f'=SOMARPRODUTO((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!I{linha_dados_inicio_saidas}:I{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
+    ws_apuracao.cell(row=r, column=COL_DEBITO_MES_PISCOFINS, value=formula_debito_piscofins).number_format = '#,##0.00'
+    
+    # Coluna F: Saldo Inicial
+    if i == 0:
+        formula_saldo_inicial_piscofins = '0'
+    else:
+        formula_saldo_inicial_piscofins = f'=G{r-1}'
+    ws_apuracao.cell(row=r, column=COL_SALDO_INICIAL_PISCOFINS, value=formula_saldo_inicial_piscofins).number_format = '#,##0.00'
+    
+    # Coluna D: PIS/COFINS A Pagar
+    # =MÁXIMO(0; C{r} - B{r} - F{r})
+    formula_a_pagar_piscofins = f'=MÁXIMO(0;C{r}-B{r}-F{r})'
+    ws_apuracao.cell(row=r, column=COL_A_PAGAR_PISCOFINS, value=formula_a_pagar_piscofins).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_A_PAGAR_PISCOFINS).fill = Estilos.PREENCHIMENTO_ALERTA
+    
+    # Coluna E: Crédito do Mês (Crédito Acumulado Gerado no Mês)
+    # =MÁXIMO(0; B{r} - C{r})
+    formula_credito_mes_apurado_piscofins = f'=MÁXIMO(0;B{r}-C{r})'
+    ws_apuracao.cell(row=r, column=COL_CREDITO_MES_APURADO_PISCOFINS, value=formula_credito_mes_apurado_piscofins).number_format = '#,##0.00'
+    
+    # Coluna G: Saldo Final (Crédito Acumulado)
+    # =MÁXIMO(0; F{r} + E{r} - D{r})
+    formula_saldo_final_piscofins = f'=MÁXIMO(0;F{r}+E{r}-D{r})'
+    ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_PISCOFINS, value=formula_saldo_final_piscofins).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_SALDO_FINAL_PISCOFINS).fill = Estilos.PREENCHIMENTO_DESTAQUE
+
+linha_atual_apuracao = LINHA_INICIO_PISCOFINS + len(MESES) + 2
+
+# --- RESULTADO MENSAL (LUCRO/PREJUÍZO) ---
+ws_apuracao.merge_cells(f'A{linha_atual_apuracao}:G{linha_atual_apuracao}')
+ws_apuracao[f'A{linha_atual_apuracao}'] = "RESULTADO MENSAL (LUCRO/PREJUÍZO)"
+ws_apuracao[f'A{linha_atual_apuracao}'].font = Estilos.FONTE_TITULO_SECAO
+ws_apuracao[f'A{linha_atual_apuracao}'].fill = Estilos.PREENCHIMENTO_TITULO_SECAO
+ws_apuracao[f'A{linha_atual_apuracao}'].alignment = Estilos.ALINHAMENTO_ESQUERDA
+linha_atual_apuracao += 1
+
+cabecalhos_resultado = [
+    "Competência", "Receita Bruta (R$)", "CMV (R$)", "Despesas Operacionais (R$)", 
+    "Tributos a Pagar (R$)", "Resultado do Mês (R$)", "Resultado Acumulado (R$)"
+]
+COL_RECEITA_BRUTA = 2
+COL_CMV = 3
+COL_DESPESAS = 4
+COL_TRIBUTOS_A_PAGAR = 5
+COL_RESULTADO_MES = 6
+COL_RESULTADO_ACUMULADO = 7
+
+for col_num, cab in enumerate(cabecalhos_resultado, 1):
+    c = ws_apuracao.cell(row=linha_atual_apuracao, column=col_num, value=cab)
+    c.font = Estilos.FONTE_CABECALHO
+    c.fill = Estilos.PREENCHIMENTO_CABECALHO
+    c.alignment = Estilos.ALINHAMENTO_CENTRO
+    c.border = Estilos.BORDA_FINA
+linha_atual_apuracao += 1
+LINHA_INICIO_RESULTADO = linha_atual_apuracao
+
+for i, mes in enumerate(MESES):
+    r = LINHA_INICIO_RESULTADO + i
+    
+    # Coluna A: Mês
+    ws_apuracao.cell(row=r, column=COL_MES, value=mes).alignment = Estilos.ALINHAMENTO_CENTRO
+    
+    # Coluna B: Receita Bruta
+    # =SOMARPRODUTO((Saídas!B:B=A{r})*(Saídas!E:E))
+    formula_receita_bruta = f'=SOMARPRODUTO((Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=A{r})*(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}))'
+    ws_apuracao.cell(row=r, column=COL_RECEITA_BRUTA, value=formula_receita_bruta).number_format = '#,##0.00'
+    
+    # Coluna C: CMV (AGORA AUTOMÁTICO)
+    # =SOMARPRODUTO((Entradas!B:B=A{r})*(Entradas!G:G="Compra de Mercadoria")*(Entradas!F:F))
+    # Soma o Custo da Mercadoria (Coluna F) das Entradas, filtrando por Competência (Coluna B) e Classificação (Coluna G) = "Compra de Mercadoria"
+    formula_cmv = (
+        f'=SOMARPRODUTO('
+        f'(Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=A{r})*'
+        f'(Entradas!G{linha_dados_inicio_entradas}:G{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}="Compra de Mercadoria")*'
+        f'(Entradas!F{linha_dados_inicio_entradas}:F{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1})'
+        f')'
+    )
+    ws_apuracao.cell(row=r, column=COL_CMV, value=formula_cmv).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_CMV).fill = Estilos.PREENCHIMENTO_TOTAL # Não é mais editável
+    
+    # Coluna D: Despesas Operacionais (Editável)
+    ws_apuracao.cell(row=r, column=COL_DESPESAS).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_DESPESAS).fill = Estilos.PREENCHIMENTO_EDITAVEL
+    
+    # Coluna E: Tributos a Pagar
+    # ICMS A Pagar (D da tabela ICMS) + PIS/COFINS A Pagar (D da tabela PIS/COFINS) + PROTEGE a Pagar (K da tabela ICMS)
+    linha_icms = LINHA_INICIO_ICMS + i
+    linha_piscofins = LINHA_INICIO_PISCOFINS + i
+    formula_tributos = f'=\'Apuração Mensal\'!{get_column_letter(COL_A_PAGAR_ICMS)}{linha_icms}+\'Apuração Mensal\'!{get_column_letter(COL_A_PAGAR_PISCOFINS)}{linha_piscofins}+\'Apuração Mensal\'!{get_column_letter(COL_PROTEGE_ICMS)}{linha_icms}'
+    ws_apuracao.cell(row=r, column=COL_TRIBUTOS_A_PAGAR, value=formula_tributos).number_format = '#,##0.00'
+    
+    # Coluna F: Resultado do Mês
+    # Receita Bruta - CMV - Despesas - Tributos a Pagar
+    formula_resultado_mes = f'=B{r}-C{r}-D{r}-E{r}'
+    ws_apuracao.cell(row=r, column=COL_RESULTADO_MES, value=formula_resultado_mes).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_RESULTADO_MES).fill = Estilos.PREENCHIMENTO_TOTAL
+    
+    # Coluna G: Resultado Acumulado
+    if i == 0:
+        formula_resultado_acumulado = f'=F{r}'
+    else:
+        formula_resultado_acumulado = f'=G{r-1}+F{r}'
+    ws_apuracao.cell(row=r, column=COL_RESULTADO_ACUMULADO, value=formula_resultado_acumulado).number_format = '#,##0.00'
+    ws_apuracao.cell(row=r, column=COL_RESULTADO_ACUMULADO).fill = Estilos.PREENCHIMENTO_DESTAQUE
+
+# Ajusta largura das colunas
+ws_apuracao.column_dimensions['A'].width = 18
+ws_apuracao.column_dimensions['B'].width = 20
+ws_apuracao.column_dimensions['C'].width = 20
+ws_apuracao.column_dimensions['D'].width = 25
+ws_apuracao.column_dimensions['E'].width = 25
+ws_apuracao.column_dimensions['F'].width = 25
+ws_apuracao.column_dimensions['G'].width = 25
+ws_apuracao.column_dimensions['H'].width = 20
+ws_apuracao.column_dimensions['I'].width = 20
+ws_apuracao.column_dimensions['J'].width = 20
+ws_apuracao.column_dimensions['K'].width = 25
+ws_apuracao.column_dimensions['L'].width = 25
+ws_apuracao.freeze_panes = f"A{linha_inicial_apuracao + 1}"
+
+# =============================================================================
+# ABA 4: RESUMO & GUIA (Atualizada)
+# =============================================================================
+print("📊 Criando aba 'Resumo & Guia'...")
+ws_resumo = wb.create_sheet("Resumo & Guia")
+linha_inicial_resumo = adicionar_cabecalho_padrao(ws_resumo, "RESUMO EXECUTIVO E GUIA")
+linha_atual_resumo = linha_inicial_resumo + 1
+
+# --- RESUMO EXECUTIVO - VALORES FINAIS (ÚLTIMO MÊS APURADO) ---
+ws_resumo.merge_cells(f'A{linha_atual_resumo}:E{linha_atual_resumo}')
+ws_resumo[f'A{linha_atual_resumo}'] = "RESUMO EXECUTIVO - VALORES FINAIS (ÚLTIMO MÊS APURADO)"
+ws_resumo[f'A{linha_atual_resumo}'].font = Font(name='Calibri', size=16, bold=True, color="FFFFFF")
+ws_resumo[f'A{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_CABECALHO
+ws_resumo[f'A{linha_atual_resumo}'].alignment = Estilos.ALINHAMENTO_CENTRO
+linha_atual_resumo += 2
+
+ws_resumo[f'A{linha_atual_resumo}'] = "Item"
+ws_resumo[f'B{linha_atual_resumo}'] = "Valor (R$)"
+ws_resumo[f'A{linha_atual_resumo}'].font = Font(bold=True)
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True)
+ws_resumo[f'B{linha_atual_resumo}'].alignment = Estilos.ALINHAMENTO_DIREITA
+linha_atual_resumo += 1
+
+# Referências para o último mês (Dezembro)
+LINHA_FINAL_ICMS = LINHA_INICIO_ICMS + len(MESES) - 1
+LINHA_FINAL_PISCOFINS = LINHA_INICIO_PISCOFINS + len(MESES) - 1
+LINHA_FINAL_RESULTADO = LINHA_INICIO_RESULTADO + len(MESES) - 1
+
+# ICMS A Pagar
+ws_resumo[f'A{linha_atual_resumo}'] = "ICMS A PAGAR (Mês)"
+formula_icms_pagar = f'=\'Apuração Mensal\'!{get_column_letter(COL_A_PAGAR_ICMS)}{LINHA_FINAL_ICMS}'
+ws_resumo[f'B{linha_atual_resumo}'] = formula_icms_pagar
+ws_resumo[f'B{linha_atual_resumo}'].number_format = '#,##0.00'
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, size=14, color="FFFFFF")
+ws_resumo[f'B{linha_atual_resumo}'].fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_DUPLA_BAIXO
+linha_atual_resumo += 1
+
+# PROTEGE A Pagar
+ws_resumo[f'A{linha_atual_resumo}'] = "PROTEGE A PAGAR (15%) (Mês)"
+formula_protege_pagar = f'=\'Apuração Mensal\'!{get_column_letter(COL_PROTEGE_ICMS)}{LINHA_FINAL_ICMS}'
+ws_resumo[f'B{linha_atual_resumo}'] = formula_protege_pagar
+ws_resumo[f'B{linha_atual_resumo}'].number_format = '#,##0.00'
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, size=14, color="FFFFFF")
+ws_resumo[f'B{linha_atual_resumo}'].fill = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_DUPLA_BAIXO
+linha_atual_resumo += 1
+
+# PIS/COFINS A Pagar
+ws_resumo[f'A{linha_atual_resumo}'] = "PIS/COFINS A PAGAR (Mês)"
+formula_piscofins_pagar = f'=\'Apuração Mensal\'!{get_column_letter(COL_A_PAGAR_PISCOFINS)}{LINHA_FINAL_PISCOFINS}'
+ws_resumo[f'B{linha_atual_resumo}'] = formula_piscofins_pagar
+ws_resumo[f'B{linha_atual_resumo}'].number_format = '#,##0.00'
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, size=14, color="FFFFFF")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_PISCOFINS
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_DUPLA_BAIXO
+linha_atual_resumo += 1
+
+# Crédito ICMS a Transportar
+ws_resumo[f'A{linha_atual_resumo}'] = "ICMS Crédito a Transportar (Saldo Final)"
+formula_icms_credito_final = f'=\'Apuração Mensal\'!{get_column_letter(COL_SALDO_FINAL_ICMS)}{LINHA_FINAL_ICMS}'
+ws_resumo[f'B{linha_atual_resumo}'] = formula_icms_credito_final
+ws_resumo[f'B{linha_atual_resumo}'].number_format = '#,##0.00'
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, size=11)
+ws_resumo[f'B{linha_atual_resumo}'].fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
+linha_atual_resumo += 1
+
+# Crédito PIS/COFINS a Transportar
+ws_resumo[f'A{linha_atual_resumo}'] = "PIS/COFINS Crédito a Transportar (Saldo Final)"
+formula_piscofins_credito_final = f'=\'Apuração Mensal\'!{get_column_letter(COL_SALDO_FINAL_PISCOFINS)}{LINHA_FINAL_PISCOFINS}'
+ws_resumo[f'B{linha_atual_resumo}'] = formula_piscofins_credito_final
+ws_resumo[f'B{linha_atual_resumo}'].number_format = '#,##0.00'
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, size=11)
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_PISCOFINS
+linha_atual_resumo += 3
+
+# Resultado Acumulado
+ws_resumo[f'A{linha_atual_resumo}'] = "RESULTADO ACUMULADO NO ANO (Lucro/Prejuízo)"
+formula_resultado_acumulado_final = f'=\'Apuração Mensal\'!{get_column_letter(COL_RESULTADO_ACUMULADO)}{LINHA_FINAL_RESULTADO}'
+ws_resumo[f'B{linha_atual_resumo}'] = formula_resultado_acumulado_final
+ws_resumo[f'B{linha_atual_resumo}'].number_format = '#,##0.00'
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, size=14, color="FFFFFF")
+ws_resumo[f'B{linha_atual_resumo}'].fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_DUPLA_BAIXO
+linha_atual_resumo += 3
+
+# --- AUDITORIA & ALERTAS (Resumo) ---
+ws_resumo.merge_cells(f'A{linha_atual_resumo}:E{linha_atual_resumo}')
+ws_resumo[f'A{linha_atual_resumo}'] = "AUDITORIA & ALERTAS"
+ws_resumo[f'A{linha_atual_resumo}'].font = Estilos.FONTE_TITULO_SECAO
+ws_resumo[f'A{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_TITULO_SECAO
+ws_resumo[f'A{linha_atual_resumo}'].alignment = Estilos.ALINHAMENTO_ESQUERDA
+linha_atual_resumo += 1
+
+ws_resumo[f'A{linha_atual_resumo}'] = "Verificação"
+ws_resumo[f'B{linha_atual_resumo}'] = "Status"
+ws_resumo[f'A{linha_atual_resumo}'].font = Font(bold=True)
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True)
+ws_resumo[f'B{linha_atual_resumo}'].alignment = Estilos.ALINHAMENTO_CENTRO
+linha_atual_resumo += 1
+
+# Alerta: Benefício PROTEGE marcado com alíquota diferente de 19%
+ws_resumo[f'A{linha_atual_resumo}'] = "Benefício PROTEGE marcado com % ≠ 19%"
+formula_alerta_protege = (
+    f'=SE(SOMARPRODUTO(--(Saídas!G{linha_dados_inicio_saidas}:G{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}="Sim");'
+    f'--(Saídas!F{linha_dados_inicio_saidas}:F{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}<>"19%"))>0;'
+    f'"⚠ ERRO: Verificar! (Linhas na aba Saídas)","✓ OK")'
+)
+ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_protege
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, color="C00000")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_ALERTA
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_FINA
+linha_atual_resumo += 1
+
+# Alerta: Competência (mm/aaaa) ausente onde Valor da Nota está preenchido
+ws_resumo[f'A{linha_atual_resumo}'] = "Competência (mm/aaaa) ausente (Entradas)"
+formula_alerta_comp_entrada = (
+    f'=SE(SOMARPRODUTO(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0);'
+    f'--(Entradas!B{linha_dados_inicio_entradas}:B{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'"⚠ ERRO: Preencher! (Linhas na aba Entradas)","✓ OK")'
+)
+ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_comp_entrada
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, color="C00000")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_ALERTA
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_FINA
+linha_atual_resumo += 1
+
+ws_resumo[f'A{linha_atual_resumo}'] = "Competência (mm/aaaa) ausente (Saídas)"
+formula_alerta_comp_saida = (
+    f'=SE(SOMARPRODUTO(--(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}>0);'
+    f'--(Saídas!B{linha_dados_inicio_saidas}:B{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'"⚠ ERRO: Preencher! (Linhas na aba Saídas)","✓ OK")'
+)
+ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_comp_saida
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, color="C00000")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_ALERTA
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_FINA
+linha_atual_resumo += 1
+
+# Alerta: Classificação ausente em Entradas
+ws_resumo[f'A{linha_atual_resumo}'] = "Classificação ausente (Entradas)"
+formula_alerta_classificacao = (
+    f'=SE(SOMARPRODUTO(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0);'
+    f'--(Entradas!G{linha_dados_inicio_entradas}:G{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'"⚠ ERRO: Preencher! (Linhas na aba Entradas)","✓ OK")'
+)
+ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_classificacao
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, color="C00000")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_ALERTA
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_FINA
+linha_atual_resumo += 1
+
+# Alerta: Data ausente em Entradas
+ws_resumo[f'A{linha_atual_resumo}'] = "Data ausente (Entradas)"
+formula_alerta_data_entrada = (
+    f'=SE(SOMARPRODUTO(--(Entradas!E{linha_dados_inicio_entradas}:E{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}>0);'
+    f'--(Entradas!A{linha_dados_inicio_entradas}:A{linha_dados_inicio_entradas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'"⚠ ERRO: Preencher! (Linhas na aba Entradas)","✓ OK")'
+)
+ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_data_entrada
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, color="C00000")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_ALERTA
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_FINA
+linha_atual_resumo += 1
+
+# Alerta: Data ausente em Saídas
+ws_resumo[f'A{linha_atual_resumo}'] = "Data ausente (Saídas)"
+formula_alerta_data_saida = (
+    f'=SE(SOMARPRODUTO(--(Saídas!E{linha_dados_inicio_saidas}:E{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}>0);'
+    f'--(Saídas!A{linha_dados_inicio_saidas}:A{linha_dados_inicio_saidas+QTD_LINHAS_PADRAO-1}=""))>0;'
+    f'"⚠ ERRO: Preencher! (Linhas na aba Saídas)","✓ OK")'
+)
+ws_resumo[f'B{linha_atual_resumo}'] = formula_alerta_data_saida
+ws_resumo[f'B{linha_atual_resumo}'].font = Font(bold=True, color="C00000")
+ws_resumo[f'B{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_ALERTA
+ws_resumo[f'B{linha_atual_resumo}'].border = Estilos.BORDA_FINA
+linha_atual_resumo += 1
+
+# --- INSTRUÇÕES DE USO (Atualizadas) ---
+linha_atual_resumo += 2
+ws_resumo.merge_cells(f'A{linha_atual_resumo}:E{linha_atual_resumo}')
+ws_resumo[f'A{linha_atual_resumo}'] = "INSTRUÇÕES DE USO"
+ws_resumo[f'A{linha_atual_resumo}'].font = Estilos.FONTE_TITULO_SECAO
+ws_resumo[f'A{linha_atual_resumo}'].fill = Estilos.PREENCHIMENTO_TITULO_SECAO
+ws_resumo[f'A{linha_atual_resumo}'].alignment = Estilos.ALINHAMENTO_ESQUERDA
+linha_atual_resumo += 2
+
+instrucoes = [
+    "1. Preencha as abas 'Entradas' e 'Saídas' com as notas fiscais do ano, preenchendo a 'Competência (mm/aaaa)' em todas as linhas.",
+    "2. Células AMARELAS são editáveis; células com fórmulas (brancas ou coloridas) estão protegidas.",
+    "3. Na aba 'Entradas', a coluna 'Classificação' é obrigatória e define o direito ao crédito de ICMS e PIS/COFINS (somente 'Compra de Mercadoria' gera crédito).",
+    "4. **NOVO:** Na aba 'Entradas', preencha a coluna **'Custo da Mercadoria (R$)'** para as notas de compra. Este valor será usado para o cálculo automático do CMV.",
+    "5. Na aba 'Saídas', marque 'Sim' em 'Benefício PROTEGE' APENAS para vendas com alíquota 19% que se enquadram. Marcar 'Sim' com outra alíquota gerará um ALERTA.",
+    "6. A aba 'Apuração Mensal' consolida automaticamente os valores mês a mês, calculando o ICMS, PIS/COFINS e o Resultado (Lucro/Prejuízo).",
+    "7. **NOVO:** O **CMV (Custo da Mercadoria Vendida)** é calculado automaticamente na aba 'Apuração Mensal' somando o 'Custo da Mercadoria' das notas de entrada classificadas como 'Compra de Mercadoria' por competência.",
+    "8. Preencha apenas as **'Despesas Operacionais'** na aba 'Apuração Mensal' para completar o cálculo do Resultado.",
+    "9. Verifique os alertas na seção 'Auditoria & Alertas' (nesta aba) para garantir a correção dos dados.",
+    "10. Os valores finais (ICMS, PIS/COFINS e PROTEGE a pagar) e o Resultado Acumulado são exibidos no topo desta aba (Resumo & Guia).",
+    "IMPORTANTE: O PROTEGE é sempre 15% do ICMS desonerado, conforme legislação vigente e é IMUTÁVEL."
+]
+
+for inst in instrucoes:
+    ws_resumo.merge_cells(f'A{linha_atual_resumo}:E{linha_atual_resumo}')
+    ws_resumo[f'A{linha_atual_resumo}'] = inst
+    ws_resumo[f'A{linha_atual_resumo}'].alignment = Estilos.ALINHAMENTO_ESQUERDA
+    if "IMPORTANTE" in inst:
+        ws_resumo[f'A{linha_atual_resumo}'].font = Font(bold=True, color="FF0000")
+    ws_resumo.row_dimensions[linha_atual_resumo].height = 15
+    linha_atual_resumo += 1
+
+ws_resumo.column_dimensions['A'].width = 40
+ws_resumo.column_dimensions['B'].width = 25
+ws_resumo.column_dimensions['C'].width = 15
+ws_resumo.column_dimensions['D'].width = 15
+ws_resumo.column_dimensions['E'].width = 15
+ws_resumo.freeze_panes = f"A{linha_inicial_resumo + 1}"
+
+# =============================================================================
+# PROTEÇÃO DE CÉLULAS (SEM PROTEÇÃO DE PLANILHA COMPLETA)
+# =============================================================================
+print("🔒 Aplicando proteção de células (apenas fórmulas bloqueadas)...")
+
+# Colunas de fórmula na aba Entradas: I, J, K (9, 10, 11)
+colunas_formula_entradas_idx = [9, 10, 11]
+colunas_editaveis_entradas_idx = [1, 2, 3, 4, 5, 6, 7, 8, 12]
+proteger_celulas_formula(
+    ws_entradas, 
+    linha_dados_inicio_entradas, 
+    QTD_LINHAS_PADRAO, 
+    colunas_formula=colunas_formula_entradas_idx,
+    colunas_editaveis=colunas_editaveis_entradas_idx,
+    max_col=MAX_COL_ENTRADAS
+)
+
+# Colunas de fórmula na aba Saídas: H, I (8, 9)
+colunas_formula_saidas_idx = [8, 9]
+colunas_editaveis_saidas_idx = [1, 2, 3, 4, 5, 6, 7, 10]
+proteger_celulas_formula(
+    ws_saidas, 
+    linha_dados_inicio_saidas, 
+    QTD_LINHAS_PADRAO, 
+    colunas_formula=colunas_formula_saidas_idx,
+    colunas_editaveis=colunas_editaveis_saidas_idx,
+    max_col=MAX_COL_SAIDAS
+)
+
+# Colunas editáveis na aba Apuração Mensal: Despesas Operacionais (4) na seção Resultado
+LINHA_FIM_RESULTADO = LINHA_INICIO_RESULTADO + len(MESES) - 1
+for r in range(LINHA_INICIO_RESULTADO, LINHA_FIM_RESULTADO + 1):
+    # CMV (COL_CMV = 3) agora é fórmula, então só Despesas Operacionais é editável
+    ws_apuracao.cell(row=r, column=COL_DESPESAS).protection = Protection(locked=False)
+
+# Bloqueia as células de fórmula na Apuração Mensal
+colunas_formula_apuracao = [
+    COL_CREDITO_MES_ICMS, COL_DEBITO_MES_ICMS, COL_A_PAGAR_ICMS, COL_CREDITO_MES_APURADO_ICMS, COL_SALDO_INICIAL_ICMS, COL_SALDO_FINAL_ICMS, 
+    COL_ICMS_CHEIO, COL_ICMS_EFETIVO, COL_ICMS_DESONERADO, COL_PROTEGE_ICMS, COL_CREDITO_TRANSPORTAR_ICMS,
+    COL_CREDITO_MES_PISCOFINS, COL_DEBITO_MES_PISCOFINS, COL_A_PAGAR_PISCOFINS, COL_CREDITO_MES_APURADO_PISCOFINS, COL_SALDO_INICIAL_PISCOFINS, COL_SALDO_FINAL_PISCOFINS,
+    COL_RECEITA_BRUTA, COL_CMV, COL_TRIBUTOS_A_PAGAR, COL_RESULTADO_MES, COL_RESULTADO_ACUMULADO
+]
+for r in range(LINHA_INICIO_ICMS, LINHA_INICIO_ICMS + len(MESES)):
+    for c in colunas_formula_apuracao:
+        ws_apuracao.cell(row=r, column=c).protection = Protection(locked=True)
+for r in range(LINHA_INICIO_PISCOFINS, LINHA_INICIO_PISCOFINS + len(MESES)):
+    for c in colunas_formula_apuracao:
+        ws_apuracao.cell(row=r, column=c).protection = Protection(locked=True)
+for r in range(LINHA_INICIO_RESULTADO, LINHA_INICIO_RESULTADO + len(MESES)):
+    for c in colunas_formula_apuracao:
+        ws_apuracao.cell(row=r, column=c).protection = Protection(locked=True)
+
+# =============================================================================
+# SALVAR ARQUIVO
+# =============================================================================
+print("💾 Salvando arquivo...")
+try:
+    wb.save(CAMINHO_COMPLETO)
+    print("\n" + "="*70)
+    print("✅ PLANILHA CRIADA COM SUCESSO!")
+    print("="*70)
+    print(f"📁 Local: {CAMINHO_COMPLETO}")
+    print(f"📊 Abas criadas: Entradas | Saídas | Apuração Mensal | Resumo & Guia")
+    print(f"🔢 PROTEGE fixado em: {PROTEGE_PERCENTUAL*100}% (imutável)")
+    print(f"🔢 PIS/COFINS fixado em: {PISCOFINS_ALIQUOTA*100}% (imutável)")
+    print(f"🔒 Proteção aplicada: Fórmulas bloqueadas, células amarelas editáveis")
+    print(f"✓ Validações configuradas (dropdown nas alíquotas, classificação e Sim/Não)")
+    print(f"✓ Apuração Mensal (ICMS, PIS/COFINS e Resultado) implementada")
+    print(f"✓ {QTD_LINHAS_PADRAO} linhas preparadas para entrada de dados em Entradas e Saídas")
+    print("\n📋 PRÓXIMOS PASSOS:")
+    print("   1. Abra o arquivo no Excel ou LibreOffice")
+    print("   2. Preencha as abas 'Entradas' e 'Saídas' (células amarelas)")
+    print("   3. Preencha Despesas Operacionais na aba 'Apuração Mensal'")
+    print("   4. Consulte os resultados finais na aba 'Resumo & Guia' e 'Apuração Mensal'")
+    print("   5. Verifique os alertas na aba 'Resumo & Guia'")
+    print("="*70)
+    print("\n✨ Script executado com sucesso!")
+    
+except PermissionError:
+    print("\n" + "="*70)
+    print("❌ ERRO: Permissão negada!")
+    print("="*70)
+    print("⚠ O arquivo pode estar aberto no Excel/LibreOffice.")
+    print("💡 SOLUÇÃO:")
+    print(f"   1. Feche o arquivo '{NOME_ARQUIVO}' se estiver aberto")
+    print("   2. Execute o script novamente")
+    print("="*70)
+    
+except FileNotFoundError:
+    print("\n" + "="*70)
+    print("❌ ERRO: Caminho não encontrado!")
+    print("="*70)
+    print(f"⚠ O diretório '{CAMINHO_SAIDA}' não existe ou não é acessível.")
+    print("💡 SOLUÇÃO:")
+    print(f"   1. Verifique se o diretório existe ou altere CAMINHO_SAIDA no script")
+    print("   2. No seu ambiente Windows, o caminho deve ser ajustado para: CAMINHO_SAIDA = \"U:\\\\ACOMPANHAMENTO GH\"")
+    print("="*70)
+    
+except Exception as e:
+    print("\n" + "="*70)
+    print("❌ ERRO INESPERADO!")
+    print("="*70)
+    print(f"Detalhes: {type(e).__name__}: {e}")
+    print("\n💡 POSSÍVEIS CAUSAS:")
+    print("   • Falta de permissão de escrita no diretório")
+    print("   • Espaço em disco insuficiente")
+    print("   • Caminho com caracteres especiais inválidos")
+    print("   • Biblioteca openpyxl desatualizada")
+    print("\n💡 SOLUÇÃO:")
+    print("   1. Verifique as permissões do diretório")
+    print("   2. Atualize: pip install --upgrade openpyxl")
+    print("   3. Tente salvar em outro local")
+    print("="*70)
